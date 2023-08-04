@@ -205,7 +205,7 @@ class Request(InfoBase):
 	def headers(self):
 		if not self._headers:
 			self._headers = {
-				h.split(b':')[0].strip(): h.split(b':', 1)[1].strip()
+				h.split(b':')[0].strip().decode('utf-8').lower(): h.split(b':', 1)[1].strip().strip().decode('utf-8').lower()
 				for h in self._rawdata.split(b'\r\n\r\n')[0].split(b'\r\n')[1:]
 			}
 		return self._headers
@@ -213,7 +213,31 @@ class Request(InfoBase):
 	@property
 	def body(self):
 		if self._body is None:
+			# splitting the header from the rest od the data
 			self._body = self._rawdata.split(b'\r\n\r\n', 1)[1]
+			try:
+				# if there was a chunked transfer, we need to recontruct the real body
+				if self.headers.get('transfer-encoding') == 'chunked':
+					buffer = b''
+					while True:
+						line = self._body.split(b'\r\n', 1)[0]
+						chunk_length = int(line, 16)
+						if chunk_length != 0:
+							buffer += self._body.split(b'\r\n', 1)[1][:chunk_length]
+							# Each chunk is followed by an additional empty newline ( \r\n ) so adding 2 to take care of that
+							self._body = self._body.split(b'\r\n', 1)[1][chunk_length+2:]
+
+						# Finally, a chunk size of 0 is an end indication
+						if chunk_length == 0:
+							break
+
+					self._body = buffer
+				# decompress gzip data
+				# TODO: add other methods
+				if self.headers.get('content-encoding') == 'gzip':
+					self._body = zlib.decompress(self._body, 16+zlib.MAX_WBITS)
+			except KeyError:
+				pass
 		return self._body
 
 
